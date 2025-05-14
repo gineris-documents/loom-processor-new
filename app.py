@@ -572,7 +572,7 @@ def list_folders():
 
 @app.route('/process', methods=['POST'])
 def process_video():
-    """Process a Loom video and store the output in Google Drive - simplified version."""
+    """Process a Loom video and store the output in Google Drive."""
     try:
         print("Process endpoint called")
         
@@ -582,12 +582,13 @@ def process_video():
         
         loom_url = data.get('url')
         title = data.get('title', 'Standard Operating Procedure')
+        interval = int(data.get('interval', 10))
         
         if not loom_url:
             print("Error: Missing Loom URL")
             return jsonify({"error": "Missing Loom URL"}), 400
         
-        print(f"Processing video: {loom_url}, title: {title}")
+        print(f"Processing video: {loom_url}, title: {title}, interval: {interval}")
         
         # Extract video ID
         try:
@@ -603,6 +604,9 @@ def process_video():
         os.makedirs(output_dir, exist_ok=True)
         print(f"Created output directory: {output_dir}")
         
+        frames_dir = os.path.join(output_dir, "frames")
+        audio_dir = os.path.join(output_dir, "audio")
+        
         # Download video
         print("Starting video download...")
         video_path, error = download_loom_video(loom_url)
@@ -612,65 +616,66 @@ def process_video():
         
         print(f"Video downloaded to: {video_path}")
         
-        # Extract just one frame as a test
-        print("Extracting one test frame...")
-        frame_path = os.path.join(output_dir, "test_frame.jpg")
+        # Check Google Drive credentials and folder ID
+        folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+        drive_id = os.environ.get('GOOGLE_SHARED_DRIVE_ID')
+        
+        if not folder_id and not drive_id:
+            print("No Google Drive folder ID or Shared Drive ID configured")
+            return jsonify({"error": "No Google Drive folder ID or Shared Drive ID configured"}), 500
+        
+        # Test Drive service
+        drive_service = get_drive_service()
+        if not drive_service:
+            print("Google Drive service unavailable")
+            return jsonify({"error": "Google Drive service unavailable"}), 500
+        
+        print("Google Drive service ready")
+        
+        # Extract a single test frame
+        print("Extracting test frame...")
+        test_frame_path = os.path.join(output_dir, "test_frame.jpg")
         frame_command = [
             'ffmpeg',
             '-i', video_path,
             '-vframes', '1',
-            frame_path
+            test_frame_path
         ]
         
-        frame_process = subprocess.run(frame_command, capture_output=True, text=True)
-        frame_success = os.path.exists(frame_path)
+        subprocess.run(frame_command, check=True)
         
-        if not frame_success:
-            print(f"Frame extraction failed: {frame_process.stderr}")
-            return jsonify({"error": f"Failed to extract test frame: {frame_process.stderr}"}), 500
-        
-        print("Test frame extracted successfully")
-        
-        # Check which Drive method to use
-        drive_id = os.environ.get('GOOGLE_SHARED_DRIVE_ID')
-        folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
-        
-        # Ensure we have either a folder ID or a drive ID
-        if not drive_id and not folder_id:
-            print("No Google Drive folder ID or Shared Drive ID configured")
-            return jsonify({"error": "No Google Drive folder ID or Shared Drive ID configured"}), 500
-        
-        # Upload files to Drive
+        # Upload video and test frame
+        print("Uploading files to Drive...")
         uploaded_files = []
         
-        # Function to upload a file
-        def upload_file(file_path, file_name):
-            if drive_id:
-                # Use Shared Drive
-                return upload_to_shared_drive(file_path, drive_id, folder_id, file_name)
-            else:
-                # Use regular Drive
-                return upload_to_drive(file_path, folder_id, file_name)
-        
         # Upload video
-        print("Uploading video to Drive...")
-        video_file, video_error = upload_file(video_path, f"{title}_video.mp4")
+        if drive_id:
+            video_file, video_error = upload_to_shared_drive(
+                video_path, drive_id, folder_id, f"{title}_video.mp4"
+            )
+        else:
+            video_file, video_error = upload_to_drive(
+                video_path, folder_id, f"{title}_video.mp4"
+            )
         
         if video_file:
             uploaded_files.append({"type": "video", "file": video_file})
-        else:
-            print(f"Failed to upload video: {video_error}")
         
-        # Upload test frame
-        print("Uploading test frame to Drive...")
-        frame_file, frame_error = upload_file(frame_path, f"{title}_test_frame.jpg")
+        # Upload test frame if it exists
+        if os.path.exists(test_frame_path):
+            if drive_id:
+                frame_file, frame_error = upload_to_shared_drive(
+                    test_frame_path, drive_id, folder_id, f"{title}_test_frame.jpg"
+                )
+            else:
+                frame_file, frame_error = upload_to_drive(
+                    test_frame_path, folder_id, f"{title}_test_frame.jpg"
+                )
+            
+            if frame_file:
+                uploaded_files.append({"type": "frame", "file": frame_file})
         
-        if frame_file:
-            uploaded_files.append({"type": "frame", "file": frame_file})
-        else:
-            print(f"Failed to upload test frame: {frame_error}")
-        
-        # Return success with info about uploaded files
+        # Return successful response
         return jsonify({
             "success": True,
             "video_id": video_id,
@@ -686,7 +691,6 @@ def process_video():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
-
 @app.route('/test-form')
 def test_form():
     """Render a simple HTML form to test the process endpoint."""
