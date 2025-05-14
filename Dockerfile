@@ -28,7 +28,7 @@ COPY service-account.json /app/service-account.json
 ENV PORT=8080
 ENV TEMP_DIR=/tmp/loom_videos
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
-ENV GOOGLE_DRIVE_FOLDER_ID=your-folder-id-here
+ENV GOOGLE_DRIVE_FOLDER_ID=14zGUSGhPFqNtWvRJS_O2_G79dqGtfpRk
 
 # Expose the port
 EXPOSE 8080
