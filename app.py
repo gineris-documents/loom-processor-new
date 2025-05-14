@@ -366,71 +366,85 @@ def test_drive():
 def process_video():
     """Process a Loom video and store the output in Google Drive."""
     try:
+        print("Process endpoint called")
+        
         # Get request data
         data = request.json
+        print(f"Request data: {data}")
+        
         loom_url = data.get('url')
         title = data.get('title', 'Standard Operating Procedure')
         interval = int(data.get('interval', 10))
         
         if not loom_url:
+            print("Error: Missing Loom URL")
             return jsonify({"error": "Missing Loom URL"}), 400
         
+        print(f"Processing video: {loom_url}, title: {title}, interval: {interval}")
+        
         # Extract video ID
-        video_id = extract_video_id(loom_url)
+        try:
+            video_id = extract_video_id(loom_url)
+            print(f"Extracted video ID: {video_id}")
+        except Exception as e:
+            print(f"Error extracting video ID: {e}")
+            return jsonify({"error": f"Failed to extract video ID: {str(e)}"}), 400
         
         # Create a unique output directory
         timestamp = int(time.time())
         output_dir = os.path.join(tempfile.gettempdir(), f"loom_job_{timestamp}")
         os.makedirs(output_dir, exist_ok=True)
+        print(f"Created output directory: {output_dir}")
         
         frames_dir = os.path.join(output_dir, "frames")
         audio_dir = os.path.join(output_dir, "audio")
         
         # Download video
+        print("Starting video download...")
         video_path, error = download_loom_video(loom_url)
         if not video_path:
+            print(f"Download failed: {error}")
             return jsonify({"error": f"Failed to download video: {error}"}), 500
         
-        # Extract frames
-        frames_success, frames_error = extract_frames(video_path, frames_dir, interval)
-        if not frames_success:
-            return jsonify({"error": f"Failed to extract frames: {frames_error}"}), 500
+        print(f"Video downloaded to: {video_path}")
         
-        # Extract audio
-        audio_path, audio_error = extract_audio(video_path, audio_dir)
-        if not audio_path:
-            return jsonify({"error": f"Failed to extract audio: {audio_error}"}), 500
-        
-        # Upload frames to Google Drive
+        # Check Google Drive credentials and folder ID
         folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
-        result_files = []
+        if not folder_id:
+            print("No Google Drive folder ID configured")
+            return jsonify({"error": "No Google Drive folder ID configured"}), 500
         
-        # Upload video
-        video_file, video_error = upload_to_drive(video_path, folder_id, f"{title}_video.mp4")
-        if video_file:
-            result_files.append({"type": "video", "file": video_file})
+        print(f"Using Google Drive folder ID: {folder_id}")
         
-        # Upload frames
-        for frame_file in os.listdir(frames_dir):
-            if frame_file.endswith('.jpg'):
-                frame_path = os.path.join(frames_dir, frame_file)
-                frame_info, frame_error = upload_to_drive(frame_path, folder_id, f"{title}_{frame_file}")
-                if frame_info:
-                    result_files.append({"type": "frame", "file": frame_info})
+        # Test Drive service
+        drive_service = get_drive_service()
+        if not drive_service:
+            print("Google Drive service unavailable")
+            return jsonify({"error": "Google Drive service unavailable"}), 500
         
-        # Upload audio
-        audio_file, audio_error = upload_to_drive(audio_path, folder_id, f"{title}_audio.wav")
-        if audio_file:
-            result_files.append({"type": "audio", "file": audio_file})
+        print("Google Drive service ready")
         
+        # Upload video as a test
+        print("Uploading video to Drive...")
+        video_file, upload_error = upload_to_drive(video_path, folder_id, f"{title}_video.mp4")
+        
+        if not video_file:
+            print(f"Failed to upload video: {upload_error}")
+            return jsonify({"error": f"Failed to upload video to Drive: {upload_error}"}), 500
+        
+        print(f"Video uploaded successfully: {video_file}")
+        
+        # Return basic success without processing frames or audio for now
         return jsonify({
             "success": True,
             "video_id": video_id,
             "title": title,
-            "files": result_files
+            "files": [{"type": "video", "file": video_file}]
         })
         
     except Exception as e:
+        print(f"Unhandled exception in process_video: {e}")
+        print(traceback.format_exc())
         return jsonify({
             "success": False,
             "error": str(e),
@@ -501,6 +515,39 @@ def test_form():
     </html>
     """
     return html
+
+@app.route('/test-process', methods=['POST'])
+def test_process():
+    """Test processing a Loom video - simplified version."""
+    try:
+        data = request.json
+        loom_url = data.get('url', 'https://www.loom.com/share/0cd67c5205e34420be284171e3d37060')
+        
+        print(f"Test process: Downloading video from {loom_url}")
+        
+        # Try to download
+        video_path, error = download_loom_video(loom_url)
+        
+        if video_path:
+            # Return success with file info
+            return jsonify({
+                "success": True,
+                "video_path": video_path,
+                "file_size": os.path.getsize(video_path)
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": error
+            })
+    except Exception as e:
+        print(f"Exception in test_process: {e}")
+        print(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
