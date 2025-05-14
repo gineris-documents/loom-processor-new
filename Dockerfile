@@ -22,13 +22,10 @@ RUN mkdir -p /tmp/loom_videos && \
 
 # Copy application code
 COPY app.py .
-COPY service-account.json /app/service-account.json
 
 # Set environment variables
 ENV PORT=8080
 ENV TEMP_DIR=/tmp/loom_videos
-ENV GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
-ENV GOOGLE_DRIVE_FOLDER_ID=14zGUSGhPFqNtWvRJS_O2_G79dqGtfpRk
 
 # Expose the port
 EXPOSE 8080
