@@ -632,19 +632,29 @@ def process_video():
         
         print("Google Drive service ready")
         
-        # Extract a single test frame
-        print("Extracting test frame...")
-        test_frame_path = os.path.join(output_dir, "test_frame.jpg")
-        frame_command = [
-            'ffmpeg',
-            '-i', video_path,
-            '-vframes', '1',
-            test_frame_path
-        ]
+        # Create frames directory and extract frames
+        os.makedirs(frames_dir, exist_ok=True)
+        print(f"Created frames directory: {frames_dir}")
         
-        subprocess.run(frame_command, check=True)
+        # Extract frames at specified interval
+        print(f"Extracting frames at {interval} second intervals...")
+        frames_success, frames_error = extract_frames(video_path, frames_dir, interval)
+        if not frames_success:
+            print(f"Frame extraction failed: {frames_error}")
+            return jsonify({"error": f"Failed to extract frames: {frames_error}"}), 500
         
-        # Upload video and test frame
+        # Create audio directory
+        os.makedirs(audio_dir, exist_ok=True)
+        print(f"Created audio directory: {audio_dir}")
+        
+        # Extract audio
+        print("Extracting audio...")
+        audio_path, audio_error = extract_audio(video_path, audio_dir)
+        if not audio_path:
+            print(f"Audio extraction failed: {audio_error}")
+            return jsonify({"error": f"Failed to extract audio: {audio_error}"}), 500
+        
+        # Upload files to Drive
         print("Uploading files to Drive...")
         uploaded_files = []
         
@@ -660,20 +670,50 @@ def process_video():
         
         if video_file:
             uploaded_files.append({"type": "video", "file": video_file})
+            print("Video uploaded successfully")
+        else:
+            print(f"Failed to upload video: {video_error}")
         
-        # Upload test frame if it exists
-        if os.path.exists(test_frame_path):
-            if drive_id:
-                frame_file, frame_error = upload_to_shared_drive(
-                    test_frame_path, drive_id, folder_id, f"{title}_test_frame.jpg"
-                )
-            else:
-                frame_file, frame_error = upload_to_drive(
-                    test_frame_path, folder_id, f"{title}_test_frame.jpg"
-                )
-            
-            if frame_file:
-                uploaded_files.append({"type": "frame", "file": frame_file})
+        # Upload extracted frames
+        print(f"Uploading extracted frames...")
+        frame_files = []
+        for frame_file in sorted(os.listdir(frames_dir)):
+            if frame_file.endswith('.jpg'):
+                frame_path = os.path.join(frames_dir, frame_file)
+                if drive_id:
+                    file_info, error = upload_to_shared_drive(
+                        frame_path, drive_id, folder_id, f"{title}_{frame_file}"
+                    )
+                else:
+                    file_info, error = upload_to_drive(
+                        frame_path, folder_id, f"{title}_{frame_file}"
+                    )
+                
+                if file_info:
+                    frame_files.append({"type": "frame", "file": file_info})
+                    print(f"Uploaded frame: {frame_file}")
+                else:
+                    print(f"Failed to upload frame {frame_file}: {error}")
+        
+        # Add frame files to the uploaded_files list
+        uploaded_files.extend(frame_files)
+        
+        # Upload audio file
+        print("Uploading audio file...")
+        if drive_id:
+            audio_file, audio_error = upload_to_shared_drive(
+                audio_path, drive_id, folder_id, f"{title}_audio.wav"
+            )
+        else:
+            audio_file, audio_error = upload_to_drive(
+                audio_path, folder_id, f"{title}_audio.wav"
+            )
+        
+        if audio_file:
+            uploaded_files.append({"type": "audio", "file": audio_file})
+            print("Audio file uploaded successfully")
+        else:
+            print(f"Failed to upload audio file: {audio_error}")
         
         # Return successful response
         return jsonify({
