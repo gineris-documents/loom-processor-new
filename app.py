@@ -549,6 +549,41 @@ def test_process():
             "traceback": traceback.format_exc()
         })
 
+@app.route('/test-drive-simple', methods=['GET'])
+def test_drive_simple():
+    """Extremely simple test of Google Drive upload."""
+    try:
+        # Create a small text file
+        test_file_path = os.path.join(tempfile.gettempdir(), "test_file.txt")
+        with open(test_file_path, 'w') as f:
+            f.write(f"Test file created at {time.time()}")
+        
+        # Get folder ID
+        folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+        if not folder_id:
+            return jsonify({"error": "Google Drive folder ID not configured"})
+        
+        # Upload to Drive
+        file_info, error = upload_to_drive(test_file_path, folder_id)
+        
+        if file_info:
+            return jsonify({
+                "success": True,
+                "file": file_info,
+                "message": "File uploaded successfully to Google Drive"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": error
+            })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
