@@ -437,6 +437,71 @@ def process_video():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/test-form')
+def test_form():
+    """Render a simple HTML form to test the process endpoint."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Loom Processor Test</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            form { max-width: 500px; margin: 0 auto; }
+            label { display: block; margin-top: 10px; }
+            input, button { margin-top: 5px; padding: 5px; width: 100%; }
+            button { background: #4285f4; color: white; border: none; padding: 10px; cursor: pointer; }
+            #result { margin-top: 20px; white-space: pre-wrap; background: #f5f5f5; padding: 10px; }
+        </style>
+    </head>
+    <body>
+        <form id="process-form">
+            <h2>Test Loom Video Processing</h2>
+            <label for="url">Loom URL:</label>
+            <input type="text" id="url" name="url" value="https://www.loom.com/share/0cd67c5205e34420be284171e3d37060" required>
+            
+            <label for="title">Title:</label>
+            <input type="text" id="title" name="title" value="Test SOP" required>
+            
+            <label for="interval">Frame Interval (seconds):</label>
+            <input type="number" id="interval" name="interval" value="10" min="1" required>
+            
+            <button type="submit">Process Video</button>
+        </form>
+        
+        <div id="result"></div>
+        
+        <script>
+            document.getElementById('process-form').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                const resultDiv = document.getElementById('result');
+                resultDiv.textContent = 'Processing...';
+                
+                const data = {
+                    url: document.getElementById('url').value,
+                    title: document.getElementById('title').value,
+                    interval: parseInt(document.getElementById('interval').value)
+                };
+                
+                try {
+                    const response = await fetch('/process', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    const responseData = await response.json();
+                    resultDiv.textContent = JSON.stringify(responseData, null, 2);
+                } catch (error) {
+                    resultDiv.textContent = 'Error: ' + error.message;
+                }
+            });
+        </script>
+    </body>
+    </html>
+    """
+    return html
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
