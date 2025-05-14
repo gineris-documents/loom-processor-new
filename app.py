@@ -572,7 +572,7 @@ def list_folders():
 
 @app.route('/process', methods=['POST'])
 def process_video():
-    """Process a Loom video and store the output in Google Drive."""
+    """Process a Loom video and store the output in Google Drive - simplified version."""
     try:
         print("Process endpoint called")
         
@@ -582,13 +582,12 @@ def process_video():
         
         loom_url = data.get('url')
         title = data.get('title', 'Standard Operating Procedure')
-        interval = int(data.get('interval', 10))
         
         if not loom_url:
             print("Error: Missing Loom URL")
             return jsonify({"error": "Missing Loom URL"}), 400
         
-        print(f"Processing video: {loom_url}, title: {title}, interval: {interval}")
+        print(f"Processing video: {loom_url}, title: {title}")
         
         # Extract video ID
         try:
@@ -604,9 +603,6 @@ def process_video():
         os.makedirs(output_dir, exist_ok=True)
         print(f"Created output directory: {output_dir}")
         
-        frames_dir = os.path.join(output_dir, "frames")
-        audio_dir = os.path.join(output_dir, "audio")
-        
         # Download video
         print("Starting video download...")
         video_path, error = download_loom_video(loom_url)
@@ -616,7 +612,26 @@ def process_video():
         
         print(f"Video downloaded to: {video_path}")
         
-        # Check if we're using regular Drive or Shared Drive
+        # Extract just one frame as a test
+        print("Extracting one test frame...")
+        frame_path = os.path.join(output_dir, "test_frame.jpg")
+        frame_command = [
+            'ffmpeg',
+            '-i', video_path,
+            '-vframes', '1',
+            frame_path
+        ]
+        
+        frame_process = subprocess.run(frame_command, capture_output=True, text=True)
+        frame_success = os.path.exists(frame_path)
+        
+        if not frame_success:
+            print(f"Frame extraction failed: {frame_process.stderr}")
+            return jsonify({"error": f"Failed to extract test frame: {frame_process.stderr}"}), 500
+        
+        print("Test frame extracted successfully")
+        
+        # Check which Drive method to use
         drive_id = os.environ.get('GOOGLE_SHARED_DRIVE_ID')
         folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
         
@@ -625,47 +640,42 @@ def process_video():
             print("No Google Drive folder ID or Shared Drive ID configured")
             return jsonify({"error": "No Google Drive folder ID or Shared Drive ID configured"}), 500
         
-        if drive_id:
-            print(f"Using Shared Drive ID: {drive_id}, folder ID: {folder_id}")
-        else:
-            print(f"Using Google Drive folder ID: {folder_id}")
+        # Upload files to Drive
+        uploaded_files = []
         
-        # Test Drive service
-        drive_service = get_drive_service()
-        if not drive_service:
-            print("Google Drive service unavailable")
-            return jsonify({"error": "Google Drive service unavailable"}), 500
-        
-        print("Google Drive service ready")
+        # Function to upload a file
+        def upload_file(file_path, file_name):
+            if drive_id:
+                # Use Shared Drive
+                return upload_to_shared_drive(file_path, drive_id, folder_id, file_name)
+            else:
+                # Use regular Drive
+                return upload_to_drive(file_path, folder_id, file_name)
         
         # Upload video
         print("Uploading video to Drive...")
-        video_file = None
-        upload_error = None
+        video_file, video_error = upload_file(video_path, f"{title}_video.mp4")
         
-        if drive_id:
-            # Use Shared Drive
-            video_file, upload_error = upload_to_shared_drive(
-                video_path, drive_id, folder_id, f"{title}_video.mp4"
-            )
+        if video_file:
+            uploaded_files.append({"type": "video", "file": video_file})
         else:
-            # Use regular Drive
-            video_file, upload_error = upload_to_drive(
-                video_path, folder_id, f"{title}_video.mp4"
-            )
+            print(f"Failed to upload video: {video_error}")
         
-        if not video_file:
-            print(f"Failed to upload video: {upload_error}")
-            return jsonify({"error": f"Failed to upload video to Drive: {upload_error}"}), 500
+        # Upload test frame
+        print("Uploading test frame to Drive...")
+        frame_file, frame_error = upload_file(frame_path, f"{title}_test_frame.jpg")
         
-        print(f"Video uploaded successfully: {video_file}")
+        if frame_file:
+            uploaded_files.append({"type": "frame", "file": frame_file})
+        else:
+            print(f"Failed to upload test frame: {frame_error}")
         
-        # Return basic success without processing frames or audio for now
+        # Return success with info about uploaded files
         return jsonify({
             "success": True,
             "video_id": video_id,
             "title": title,
-            "files": [{"type": "video", "file": video_file}]
+            "files": uploaded_files
         })
         
     except Exception as e:
