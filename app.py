@@ -39,13 +39,16 @@ def get_drive_service():
         return None
     
     try:
+        print(f"Loading credentials from: {credentials_path}")
         credentials = service_account.Credentials.from_service_account_file(
             credentials_path, 
             scopes=['https://www.googleapis.com/auth/drive']
         )
+        print(f"Credentials loaded successfully. Service account: {credentials.service_account_email}")
         return build('drive', 'v3', credentials=credentials)
     except Exception as e:
         print(f"Error creating Drive service: {e}")
+        traceback.print_exc()
         return None
 
 def upload_to_drive(file_path, folder_id=None, file_name=None):
@@ -59,11 +62,14 @@ def upload_to_drive(file_path, folder_id=None, file_name=None):
     
     if not folder_id:
         folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+        print(f"Using folder ID from environment: {folder_id}")
         if not folder_id:
             return None, "No folder ID provided or configured"
     
     if not file_name:
         file_name = os.path.basename(file_path)
+    
+    print(f"Uploading file: {file_path} to folder: {folder_id} with name: {file_name}")
     
     file_metadata = {
         'name': file_name,
@@ -71,6 +77,21 @@ def upload_to_drive(file_path, folder_id=None, file_name=None):
     }
     
     try:
+        # First try to verify the folder exists
+        try:
+            folder = service.files().get(fileId=folder_id).execute()
+            print(f"Found folder: {folder.get('name', 'unknown')} ({folder_id})")
+        except Exception as e:
+            print(f"Failed to verify folder: {e}")
+            # Try to list all accessible folders
+            results = service.files().list(
+                q="mimeType='application/vnd.google-apps.folder'",
+                fields="files(id, name)"
+            ).execute()
+            folders = results.get('files', [])
+            print(f"Accessible folders: {folders}")
+        
+        # Proceed with upload
         media = MediaFileUpload(file_path, resumable=True)
         file = service.files().create(
             body=file_metadata,
@@ -78,8 +99,67 @@ def upload_to_drive(file_path, folder_id=None, file_name=None):
             fields='id,name,webViewLink'
         ).execute()
         
+        print(f"File uploaded successfully: {file}")
         return file, None
     except Exception as e:
+        print(f"Upload failed: {e}")
+        traceback.print_exc()
+        return None, f"Upload failed: {str(e)}"
+
+def upload_to_shared_drive(file_path, drive_id=None, folder_id=None, file_name=None):
+    """Upload a file to a Google Shared Drive."""
+    if not os.path.exists(file_path):
+        return None, f"File not found: {file_path}"
+    
+    service = get_drive_service()
+    if not service:
+        return None, "Google Drive service not available"
+    
+    drive_id = drive_id or os.environ.get('GOOGLE_SHARED_DRIVE_ID')
+    folder_id = folder_id or os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+    
+    print(f"Using shared drive ID: {drive_id}, folder ID: {folder_id}")
+    
+    if not drive_id:
+        return None, "No shared drive ID provided or configured"
+    
+    if not file_name:
+        file_name = os.path.basename(file_path)
+    
+    print(f"Uploading file: {file_path} to shared drive: {drive_id}, folder: {folder_id}, name: {file_name}")
+    
+    file_metadata = {
+        'name': file_name,
+    }
+    
+    # If folder ID is provided, add it to parents
+    if folder_id:
+        file_metadata['parents'] = [folder_id]
+    
+    try:
+        # For Shared Drives, we need to add the supportsAllDrives=True parameter
+        media = MediaFileUpload(file_path, resumable=True)
+        
+        create_params = {
+            'body': file_metadata,
+            'media_body': media,
+            'fields': 'id,name,webViewLink',
+            'supportsAllDrives': True
+        }
+        
+        # If using a shared drive, add the driveId parameter
+        if drive_id:
+            create_params['driveId'] = drive_id
+            # For Shared Drives (Team Drives), add this parameter
+            create_params['includeItemsFromAllDrives'] = True
+        
+        file = service.files().create(**create_params).execute()
+        
+        print(f"File uploaded successfully: {file}")
+        return file, None
+    except Exception as e:
+        print(f"Upload failed: {e}")
+        traceback.print_exc()
         return None, f"Upload failed: {str(e)}"
 
 def extract_video_id(loom_url):
@@ -227,7 +307,10 @@ def index():
             "/test-download - Test video download and frame extraction",
             "/process - Process a Loom video (POST)",
             "/check-tools - Check if required tools are available",
-            "/test-drive - Test Google Drive integration"
+            "/test-drive - Test Google Drive integration",
+            "/test-shared-drive - Test Shared Drive integration",
+            "/list-drives - List available Shared Drives",
+            "/list-folders - List folders in a Shared Drive"
         ]
     })
 
@@ -261,7 +344,8 @@ def check_tools():
     results['google_drive'] = {
         'available': drive_service is not None,
         'credentials_path': os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', 'not set'),
-        'folder_id': os.environ.get('GOOGLE_DRIVE_FOLDER_ID', 'not set')
+        'folder_id': os.environ.get('GOOGLE_DRIVE_FOLDER_ID', 'not set'),
+        'shared_drive_id': os.environ.get('GOOGLE_SHARED_DRIVE_ID', 'not set')
     }
     
     return jsonify(results)
@@ -362,6 +446,134 @@ def test_drive():
             "traceback": traceback.format_exc()
         })
 
+@app.route('/test-shared-drive', methods=['GET'])
+def test_shared_drive():
+    """Test uploading to a Shared Drive."""
+    try:
+        # Create a small text file
+        test_file_path = os.path.join(tempfile.gettempdir(), "test_file.txt")
+        with open(test_file_path, 'w') as f:
+            f.write(f"Test file created at {time.time()}")
+        
+        # Get drive and folder IDs
+        drive_id = os.environ.get('GOOGLE_SHARED_DRIVE_ID')
+        folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID', None)  # Optional for Shared Drives
+        
+        if not drive_id:
+            return jsonify({"error": "Google Shared Drive ID not configured"})
+        
+        # Upload to Drive
+        file_info, error = upload_to_shared_drive(test_file_path, drive_id, folder_id)
+        
+        if file_info:
+            return jsonify({
+                "success": True,
+                "file": file_info,
+                "message": "File uploaded successfully to Google Shared Drive"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": error
+            })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+
+@app.route('/list-drives', methods=['GET'])
+def list_drives():
+    """List all accessible Shared Drives."""
+    try:
+        service = get_drive_service()
+        if not service:
+            return jsonify({"error": "Google Drive service not available"})
+        
+        # List all Shared Drives available to the service account
+        drives = []
+        page_token = None
+        
+        while True:
+            try:
+                response = service.drives().list(
+                    pageSize=100,
+                    fields="nextPageToken, drives(id, name)",
+                    pageToken=page_token
+                ).execute()
+                
+                drives.extend(response.get('drives', []))
+                page_token = response.get('nextPageToken')
+                
+                if not page_token:
+                    break
+            except Exception as e:
+                print(f"Error listing drives: {e}")
+                return jsonify({"error": f"Failed to list drives: {str(e)}"})
+        
+        return jsonify({
+            "success": True,
+            "drives": drives
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+
+@app.route('/list-folders', methods=['GET'])
+def list_folders():
+    """List all accessible folders in a Shared Drive."""
+    try:
+        service = get_drive_service()
+        if not service:
+            return jsonify({"error": "Google Drive service not available"})
+        
+        drive_id = request.args.get('drive_id') or os.environ.get('GOOGLE_SHARED_DRIVE_ID')
+        if not drive_id:
+            return jsonify({"error": "No drive ID provided"})
+        
+        # Query for folders in the specified drive
+        query = "mimeType='application/vnd.google-apps.folder'"
+        
+        folders = []
+        page_token = None
+        
+        while True:
+            try:
+                response = service.files().list(
+                    q=query,
+                    driveId=drive_id,
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                    corpora="drive",
+                    fields="nextPageToken, files(id, name, parents)",
+                    pageToken=page_token
+                ).execute()
+                
+                folders.extend(response.get('files', []))
+                page_token = response.get('nextPageToken')
+                
+                if not page_token:
+                    break
+            except Exception as e:
+                print(f"Error listing folders: {e}")
+                return jsonify({"error": f"Failed to list folders: {str(e)}"})
+        
+        return jsonify({
+            "success": True,
+            "drive_id": drive_id,
+            "folders": folders
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+
 @app.route('/process', methods=['POST'])
 def process_video():
     """Process a Loom video and store the output in Google Drive."""
@@ -408,13 +620,19 @@ def process_video():
         
         print(f"Video downloaded to: {video_path}")
         
-        # Check Google Drive credentials and folder ID
+        # Check if we're using regular Drive or Shared Drive
+        drive_id = os.environ.get('GOOGLE_SHARED_DRIVE_ID')
         folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
-        if not folder_id:
-            print("No Google Drive folder ID configured")
-            return jsonify({"error": "No Google Drive folder ID configured"}), 500
         
-        print(f"Using Google Drive folder ID: {folder_id}")
+        # Ensure we have either a folder ID or a drive ID
+        if not drive_id and not folder_id:
+            print("No Google Drive folder ID or Shared Drive ID configured")
+            return jsonify({"error": "No Google Drive folder ID or Shared Drive ID configured"}), 500
+        
+        if drive_id:
+            print(f"Using Shared Drive ID: {drive_id}, folder ID: {folder_id}")
+        else:
+            print(f"Using Google Drive folder ID: {folder_id}")
         
         # Test Drive service
         drive_service = get_drive_service()
@@ -424,9 +642,21 @@ def process_video():
         
         print("Google Drive service ready")
         
-        # Upload video as a test
+        # Upload video
         print("Uploading video to Drive...")
-        video_file, upload_error = upload_to_drive(video_path, folder_id, f"{title}_video.mp4")
+        video_file = None
+        upload_error = None
+        
+        if drive_id:
+            # Use Shared Drive
+            video_file, upload_error = upload_to_shared_drive(
+                video_path, drive_id, folder_id, f"{title}_video.mp4"
+            )
+        else:
+            # Use regular Drive
+            video_file, upload_error = upload_to_drive(
+                video_path, folder_id, f"{title}_video.mp4"
+            )
         
         if not video_file:
             print(f"Failed to upload video: {upload_error}")
@@ -558,13 +788,24 @@ def test_drive_simple():
         with open(test_file_path, 'w') as f:
             f.write(f"Test file created at {time.time()}")
         
-        # Get folder ID
+        # Check if we're using regular Drive or Shared Drive
+        drive_id = os.environ.get('GOOGLE_SHARED_DRIVE_ID')
         folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
-        if not folder_id:
-            return jsonify({"error": "Google Drive folder ID not configured"})
+        
+        # Ensure we have either a folder ID or a drive ID
+        if not drive_id and not folder_id:
+            return jsonify({"error": "No Google Drive folder ID or Shared Drive ID configured"})
         
         # Upload to Drive
-        file_info, error = upload_to_drive(test_file_path, folder_id)
+        file_info = None
+        error = None
+        
+        if drive_id:
+            # Use Shared Drive
+            file_info, error = upload_to_shared_drive(test_file_path, drive_id, folder_id)
+        else:
+            # Use regular Drive
+            file_info, error = upload_to_drive(test_file_path, folder_id)
         
         if file_info:
             return jsonify({
@@ -580,6 +821,47 @@ def test_drive_simple():
     except Exception as e:
         return jsonify({
             "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+
+@app.route('/test-drive-debug', methods=['GET'])
+def test_drive_debug():
+    """Debugging test for Google Drive."""
+    try:
+        # Report environment info
+        credentials_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', 'not set')
+        folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID', 'not set')
+        drive_id = os.environ.get('GOOGLE_SHARED_DRIVE_ID', 'not set')
+        
+        # Check if credentials file exists
+        creds_exist = os.path.exists(credentials_path) if credentials_path != 'not set' else False
+        
+        # Try to get Drive service
+        service = get_drive_service()
+        service_available = service is not None
+        
+        # Try to get service account email
+        service_account_email = "unknown"
+        try:
+            if service_available:
+                # This will fail if we can't access the service account info
+                about = service.about().get(fields="user").execute()
+                service_account_email = about.get("user", {}).get("emailAddress", "unknown")
+        except Exception as e:
+            print(f"Failed to get service account email: {e}")
+        
+        # Return debug info
+        return jsonify({
+            "credentials_path": credentials_path,
+            "credentials_exist": creds_exist,
+            "folder_id": folder_id,
+            "shared_drive_id": drive_id,
+            "service_available": service_available,
+            "service_account_email": service_account_email
+        })
+    except Exception as e:
+        return jsonify({
             "error": str(e),
             "traceback": traceback.format_exc()
         })
