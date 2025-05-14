@@ -12,6 +12,24 @@ from googleapiclient.http import MediaFileUpload
 
 app = Flask(__name__)
 
+# Add this function near the top of the file
+def setup_credentials():
+    """Set up Google API credentials from environment variable."""
+    credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+    if credentials_json:
+        # Create a temporary file to store the credentials
+        credentials_path = os.path.join(tempfile.gettempdir(), 'service-account.json')
+        with open(credentials_path, 'w') as f:
+            f.write(credentials_json)
+        
+        # Set the environment variable to the path
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
+        return True
+    return False
+
+# Add this line near the beginning of your app
+setup_credentials()
+
 # Google Drive Setup
 def get_drive_service():
     """Get an authorized Google Drive service."""
