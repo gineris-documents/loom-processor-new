@@ -84,10 +84,11 @@ def download_loom_video(loom_url):
 
 @app.route('/')
 def index():
+    """Root endpoint"""
     return jsonify({
         "message": "Loom Processor API",
         "version": "1.0.0",
-        "endpoints": ["/test-download", "/check-tools"]
+        "endpoints": ["/test-download", "/check-tools", "/simple-test"]
     })
 
 @app.route('/check-tools')
@@ -117,7 +118,15 @@ def check_tools():
     
     return jsonify(results)
 
-@app.route('/test-download')
+@app.route('/simple-test')
+def simple_test():
+    """Simple test endpoint that doesn't use any external tools."""
+    return jsonify({
+        "success": True,
+        "message": "Simple test endpoint working"
+    })
+
+@app.route('/test-download', methods=['GET'])
 def test_download():
     """Test downloading a Loom video."""
     loom_url = request.args.get('url', 'https://www.loom.com/share/0cd67c5205e34420be284171e3d37060')
