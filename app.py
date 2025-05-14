@@ -128,32 +128,28 @@ def upload_to_shared_drive(file_path, drive_id=None, folder_id=None, file_name=N
     
     print(f"Uploading file: {file_path} to shared drive: {drive_id}, folder: {folder_id}, name: {file_name}")
     
+    # For Shared Drives, we need to use a different approach
     file_metadata = {
         'name': file_name,
+        'parents': []
     }
     
-    # If folder ID is provided, add it to parents
+    # If folder ID is provided, add it to parents, otherwise use the root of the shared drive
     if folder_id:
         file_metadata['parents'] = [folder_id]
+    else:
+        file_metadata['parents'] = [drive_id]
     
     try:
-        # For Shared Drives, we need to add the supportsAllDrives=True parameter
         media = MediaFileUpload(file_path, resumable=True)
         
-        create_params = {
-            'body': file_metadata,
-            'media_body': media,
-            'fields': 'id,name,webViewLink',
-            'supportsAllDrives': True
-        }
-        
-        # If using a shared drive, add the driveId parameter
-        if drive_id:
-            create_params['driveId'] = drive_id
-            # For Shared Drives (Team Drives), add this parameter
-            create_params['includeItemsFromAllDrives'] = True
-        
-        file = service.files().create(**create_params).execute()
+        # For Shared Drives, use supportsAllDrives=True
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id,name,webViewLink',
+            supportsAllDrives=True
+        ).execute()
         
         print(f"File uploaded successfully: {file}")
         return file, None
