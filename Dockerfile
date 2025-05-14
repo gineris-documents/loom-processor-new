@@ -12,8 +12,9 @@ RUN apt-get update && \
 RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
-# Install Flask and Gunicorn
-RUN pip install flask gunicorn
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Create temp directory
 RUN mkdir -p /tmp/loom_videos && \
@@ -21,10 +22,13 @@ RUN mkdir -p /tmp/loom_videos && \
 
 # Copy application code
 COPY app.py .
+COPY service-account.json /app/service-account.json
 
 # Set environment variables
 ENV PORT=8080
 ENV TEMP_DIR=/tmp/loom_videos
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
+ENV GOOGLE_DRIVE_FOLDER_ID=your-folder-id-here
 
 # Expose the port
 EXPOSE 8080
